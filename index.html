@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -70,6 +71,8 @@ p{margin:0 0 .75em}
 .sync{font-size:12.5px;color:var(--muted);white-space:nowrap}
 .tabs{max-width:1100px;margin:8px auto 0;display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
 .tab{white-space:nowrap;min-height:40px;padding:6px 14px;border-radius:99px;border:1px solid var(--line);background:#fff;font-size:14px;font-weight:500}
+.t-badge{display:flex;align-items:center;gap:8px;background:var(--amber-2);border:1px solid #EACB85;border-radius:99px;padding:3px 4px 3px 12px;font-size:13px;font-weight:700}
+.t-badge .btn{min-height:36px;padding:4px 10px}
 .tab.locked{color:var(--muted);background:var(--bg);border-style:dashed}
 .btn.locked{background:#9DB4AE;border-color:#9DB4AE}
 .tab[aria-current="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
@@ -331,6 +334,7 @@ details.recap summary{cursor:pointer;font-weight:700;font-size:1.1rem;min-height
       <p class="err" id="ciErr" role="alert"></p>
       <button class="btn" type="submit" style="width:100%;min-height:52px;font-size:1.05rem">BẮT ĐẦU HỌC 🚀</button>
       <p class="ci-note">Bài học chỉ thu họ tên, lớp và kết quả làm bài.</p>
+      <button type="button" class="btn ghost small" id="ciTeacher" style="margin-top:10px;align-self:flex-start">👨‍🏫 Giáo viên vào xem bài</button>
     </form>
   </div>
 </div>
@@ -340,6 +344,7 @@ details.recap summary{cursor:pointer;font-weight:700;font-size:1.1rem;min-height
   <header class="topbar">
     <div class="tb-inner">
       <div class="who"><span id="tbName">👤</span><span id="tbClass">🏫</span><span id="tbXp">⭐ 0 XP</span></div>
+      <div class="t-badge hidden" id="tBadge"><span>👨‍🏫 Chế độ giáo viên: mở mọi phần</span><button type="button" class="btn ghost small" id="tExit">Thoát</button></div>
       <div class="prog" aria-label="Tiến độ">
         <div class="prog-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="progBar"><i id="progFill"></i></div>
         <span id="progText">0/5</span>
@@ -825,8 +830,12 @@ function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch 
 const sleep = ms => new Promise(r => setTimeout(r, REDUCED ? 0 : ms));
 function money(n) { return n.toLocaleString("vi-VN") + "đ"; }
 
-let S = load(STORE_KEY, null);
-function persist() { save(STORE_KEY, S); }
+const T_UNLOCK_KEY = "b8_teacher_unlock", T_PREVIEW_KEY = "b8_teacher_preview";
+function sget(k) { try { const v = sessionStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function sset(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function teacherUnlocked() { return !!sget(T_UNLOCK_KEY); }
+let S = sget(T_PREVIEW_KEY) || load(STORE_KEY, null);
+function persist() { if (S && S.teacher) sset(T_PREVIEW_KEY, S); else save(STORE_KEY, S); }
 
 function genId() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -848,7 +857,7 @@ function toast(msg, type) {
 let Q = load(QUEUE_KEY, []);
 let flushing = false, hadPending = false;
 
-function send(payload) { Q.push(payload); save(QUEUE_KEY, Q); flush(); }
+function send(payload) { if (S && S.teacher) return; Q.push(payload); save(QUEUE_KEY, Q); flush(); }
 
 async function post(p) {
   const ctrl = window.AbortController ? new AbortController() : null;
@@ -894,7 +903,8 @@ async function flush() {
 
 function updateSync() {
   const el = $("#sync"); if (!el) return;
-  if (!IS_CONFIGURED) el.textContent = "💾 Lưu trên máy";
+  if (S && S.teacher) el.textContent = "👁 Xem thử, không ghi dữ liệu";
+  else if (!IS_CONFIGURED) el.textContent = "💾 Lưu trên máy";
   else if (Q.length) el.textContent = "☁ Chờ đồng bộ (" + Q.length + ")";
   else el.textContent = "✅ Đã đồng bộ";
 }
@@ -912,8 +922,8 @@ function partDone(n) {
   return ACTIVITIES.filter(a => a.part === n).every(a => S.acts[a.id] && S.acts[a.id].done);
 }
 // Phần n chỉ mở khi đã hoàn thành phần n-1
-function isUnlocked(n) { return n === 1 || partDone(n - 1); }
-function maxUnlocked() { let n = 1; while (n < 5 && partDone(n)) n++; return n; }
+function isUnlocked(n) { return teacherUnlocked() || n === 1 || partDone(n - 1); }
+function maxUnlocked() { if (teacherUnlocked()) return 5; let n = 1; while (n < 5 && partDone(n)) n++; return n; }
 function remainingIn(n) { return ACTIVITIES.filter(a => a.part === n && !(S.acts[a.id] && S.acts[a.id].done)).length; }
 function lockedMsg(n) {
   const need = maxUnlocked();
@@ -1497,7 +1507,7 @@ function submitExit(e) {
   if (S.completed) return;
   const q1 = $("#ex1").value.trim(), q5 = $("#ex5").value.trim();
   const a2 = document.querySelector('input[name="ex2"]:checked'), a3 = document.querySelector('input[name="ex3"]:checked'), a4 = document.querySelector('input[name="ex4"]:checked');
-  const missing = ACTIVITIES.filter(a => a.part < 5 && !(S.acts[a.id] && S.acts[a.id].done));
+  const missing = S.teacher ? [] : ACTIVITIES.filter(a => a.part < 5 && !(S.acts[a.id] && S.acts[a.id].done));
   if (missing.length) {
     const parts = [...new Set(missing.map(a => a.part))].map(p => "Phần " + p).join(", ");
     $("#exErr").textContent = "Em còn " + missing.length + " hoạt động chưa hoàn thành (" + parts + "). Hãy hoàn thành trước khi nộp.";
@@ -1597,7 +1607,8 @@ function initToolbar() {
   });
   $("#btnReset").addEventListener("click", () => {
     if (!confirm("Học lại từ đầu? Toàn bộ câu trả lời trên máy này sẽ bị xoá và em cần điểm danh lại.")) return;
-    try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+    if (S && S.teacher) { S = { ...S, acts: {}, xp: 0, completed: false, exit: null, mindmap: {}, part: 1 }; persist(); }
+    else { try { localStorage.removeItem(STORE_KEY); } catch (e) {} }
     location.reload();
   });
   $("#btnTeacher").addEventListener("click", openTeacher);
@@ -1616,13 +1627,38 @@ document.addEventListener("keydown", e => {
 });
 
 // ---------- Teacher Mode ----------
-let TPW = null, TDATA = null;
+let TPW = null, TDATA = null, pwPurpose = "dash";
 function openTeacher() {
   if (!IS_CONFIGURED) { openModal("mCfg"); return; }
   if (TPW && TDATA) { showDash(); return; }
+  pwPurpose = "dash";
   $("#pwInput").value = ""; $("#pwErr").textContent = "";
   openModal("mPw");
 }
+function openTeacherPreview() {
+  if (!IS_CONFIGURED) { openModal("mCfg"); return; }
+  pwPurpose = "preview";
+  $("#pwInput").value = ""; $("#pwErr").textContent = "";
+  openModal("mPw");
+}
+// Mở khoá mọi phần cho giáo viên (chỉ trong tab trình duyệt này)
+function setTeacherUnlock(on) {
+  sset(T_UNLOCK_KEY, on ? true : null);
+  lastUnlocked = null;
+  refreshTeacherBadge();
+  if ($("#tabs").children.length) { updateProgress(); goPart(S.part || 1); }
+}
+function refreshTeacherBadge() { $("#tBadge").classList.toggle("hidden", !teacherUnlocked()); }
+function exitTeacherMode() {
+  if (!confirm("Thoát chế độ giáo viên? Các phần sẽ khoá lại theo thứ tự.")) return;
+  sset(T_UNLOCK_KEY, null);
+  if (S && S.teacher) { sset(T_PREVIEW_KEY, null); location.reload(); return; }
+  TPW = null; TDATA = null;
+  setTeacherUnlock(false);
+  toast("Đã thoát chế độ giáo viên.");
+}
+$("#tExit").addEventListener("click", exitTeacherMode);
+$("#ciTeacher").addEventListener("click", openTeacherPreview);
 async function fetchTeacher(pw) {
   const url = GOOGLE_SCRIPT_URL.trim() + "?action=teacherData&password=" + encodeURIComponent(pw) + "&t=" + Date.now();
   const res = await fetch(url);
@@ -1636,7 +1672,14 @@ $("#pwForm").addEventListener("submit", async e => {
   try {
     const d = await fetchTeacher(pw);
     if (!d || !d.ok) { $("#pwErr").textContent = (d && d.error && d.error !== "Sai mật mã") ? "Lỗi: " + d.error : "Sai mật mã. Hãy thử lại."; return; }
-    TPW = pw; TDATA = d; closeModal("mPw"); showDash();
+    TPW = pw; TDATA = d; closeModal("mPw");
+    if (pwPurpose === "preview") {
+      S = { studentId: "TEACHER_PREVIEW", name: TEACHER_NAME, cls: "Giáo viên", teacher: true, startedAt: new Date().toISOString(), part: 1, acts: {}, xp: 0, completed: false, exit: null };
+      setTeacherUnlock(true); persist(); enterApp();
+      toast("👨‍🏫 Chế độ giáo viên: mở mọi phần, không ghi dữ liệu lên Google Sheets.");
+    } else {
+      setTeacherUnlock(true); showDash();
+    }
   } catch (err) { $("#pwErr").textContent = "Không kết nối được Google Apps Script. Hãy kiểm tra Internet và Web App URL."; }
 });
 function showDash() { $("#dash").classList.remove("hidden"); document.body.style.overflow = "hidden"; renderDash(); $("#dClose").focus(); }
@@ -1712,6 +1755,7 @@ function exportCSV() {
 // ---------- Khởi động ----------
 initCheckin();
 initToolbar();
+refreshTeacherBadge();
 if (S && S.studentId) enterApp();
 else $("#checkin").classList.remove("hidden");
 </script>
